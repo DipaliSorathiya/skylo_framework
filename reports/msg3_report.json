@@ -1,0 +1,10 @@
+{
+    "generated_at": "2026-08-09T10:32:58.708451",
+    "total_records": 451,
+    "successes": 409,
+    "failures": 42,
+    "ignored": 0,
+    "success_rate": 90.69,
+    "success_threshold": 95.0,
+    "quality_status": "FAIL"
+}
