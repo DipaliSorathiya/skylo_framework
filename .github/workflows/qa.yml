@@ -4,12 +4,10 @@ on:
   push:
     branches:
       - main
-      - master
 
   pull_request:
     branches:
       - main
-      - master
 
   workflow_dispatch:
 
@@ -19,50 +17,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ---------------------------------------------------------
-      # 1. Checkout repository
-      # ---------------------------------------------------------
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ---------------------------------------------------------
-      # 2. Setup Python
-      # ---------------------------------------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.9"
           cache: "pip"
 
-      # ---------------------------------------------------------
-      # 3. Install dependencies
-      # ---------------------------------------------------------
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ---------------------------------------------------------
-      # 4. Run complete test suite
-      # ---------------------------------------------------------
-      - name: Run pytest
+      - name: Create reports directory
+        run: |
+          mkdir -p reports
+
+      - name: Run test suite
         run: |
           pytest -v \
             --html=reports/report.html \
             --self-contained-html
 
-      # ---------------------------------------------------------
-      # 5. Run MSG3 Quality Gate
-      # ---------------------------------------------------------
       - name: Run MSG3 Quality Gate
         run: |
           python -m gate.cli \
             --log logs/bs_log2.txt \
             --min-rate 95
 
-      # ---------------------------------------------------------
-      # 6. Upload reports
-      # ---------------------------------------------------------
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
