@@ -2,154 +2,62 @@
 
 ## 1. Overview
 
-Part 1 implements a reusable Python-based analyzer for calculating the **MSG3 success rate** from raw eNodeB base-station logs.
-
-The goal is to take a production-style log file, identify relevant MSG3 attempts, classify their outcomes, calculate the success rate, and produce both human-readable and machine-readable results.
-
-The implementation is designed as a reusable library rather than a one-off script so that the same analyzer can be consumed later by **Part 3 — the Quality Gate**.
-
-### Success-rate formula
-
-The assignment defines the success rate as:
+The MSG3 analyzer parses eNodeB logs, identifies MSG3 attempts, classifies their outcomes, and calculates the success rate using the required formula.
 
 ```text
 Success Rate (%) =
-    (successes / (successes + failures)) × 100
+(successes / (successes + failures)) × 100
 ```
 
-Only measurable outcomes — successes and failures — participate in the denominator.
-
-Ignored or unrecognized statuses do not affect the success rate.
+The analyzer is implemented as reusable library logic so that **Part 3 — Quality Gate** can consume it directly without duplicating the calculation.
 
 ---
 
-# 2. Requirements Covered
-
-The implementation addresses the following Part 1 requirements:
-
-| Requirement                     | Implementation                                           |
-| ------------------------------- | -------------------------------------------------------- |
-| Analyze both supplied log files | `LogParser` + `Msg3Analyzer`                             |
-| Runtime-selectable log file     | CLI accepts log path                                     |
-| Calculate MSG3 success rate     | `Msg3Analyzer`                                           |
-| Handle malformed lines          | Parser safely ignores incomplete entries                 |
-| Handle multi-line entries       | Parser joins physical continuation lines                 |
-| Handle ANSI escape sequences    | Parser removes ANSI formatting                           |
-| Ignore unrelated log entries    | Parser identifies actual MSG3 result records             |
-| Handle unknown statuses         | Unknown statuses are preserved and classified as ignored |
-| Handle empty input              | Analyzer returns zero measurable records                 |
-| Machine-readable output         | JSON report                                              |
-| Human-readable output           | CLI console output                                       |
-| Reusable by Part 3              | Analyzer is independent of CLI                           |
-| Unit tests                      | Parser and analyzer tests                                |
-
----
-
-# 3. Project Structure
-
-The Part 1 implementation is organized as follows:
+## 2. Implementation Flow
 
 ```text
-QA-Framework/
-│
-├── analyzer/
-│   ├── __init__.py
-│   ├── models.py
-│   ├── constants.py
-│   ├── parser.py
-│   ├── msg3_analyzer.py
-│   ├── report.py
-│   ├── cli.py
-│   └── README_Part1.md
-│
-├── logs/
-│   ├── bs_log.txt
-│   └── bs_log2.txt
-│
-├── reports/
-│   └── msg3_report.json
-│
-├── tests/
-│   ├── test_parser.py
-│   └── test_msg3_analyzer.py
-│
-├── api/
-│   └── ...
-│
-├── gate/
-│   └── ...
-│
-├── pytest.ini
-├── requirements.txt
-└── README.md
+Raw Log
+   ↓
+LogParser
+   ↓
+Msg3Record
+   ↓
+Msg3Analyzer
+   ↓
+Success / Failure / Ignored
+   ↓
+Success Rate
+   ↓
+Console + JSON Report
+   ↓
+Part 3 Quality Gate
 ```
+
+### Responsibilities
+
+| Component          | Responsibility                            |
+| ------------------ | ----------------------------------------- |
+| `parser.py`        | Parse and normalize raw log entries       |
+| `models.py`        | Define `Msg3Record`                       |
+| `constants.py`     | Define status classifications             |
+| `msg3_analyzer.py` | Calculate success/failure counts and rate |
+| `report.py`        | Generate console and JSON reports         |
+| `cli.py`           | Accept log file at runtime                |
 
 ---
 
-# 4. Architecture
+## 3. Log Parsing
 
-The Part 1 flow is:
+The supplied logs contain different formatting patterns. The parser handles:
 
-```text
-                Raw Log File
-                     │
-                     ▼
-              ┌─────────────┐
-              │   Parser    │
-              │             │
-              │ ANSI cleanup│
-              │ Multi-line  │
-              │ validation  │
-              │ extraction  │
-              └──────┬──────┘
-                     │
-                     ▼
-              List[Msg3Record]
-                     │
-                     ▼
-             ┌──────────────┐
-             │   Analyzer   │
-             │              │
-             │ success      │
-             │ failure      │
-             │ ignored      │
-             │ success rate │
-             └──────┬───────┘
-                    │
-                    ▼
-             ┌──────────────┐
-             │   Reporter   │
-             └──────┬───────┘
-                    │
-             ┌──────┴───────┐
-             ▼              ▼
-        Console Output   JSON Report
-                              │
-                              ▼
-                       Part 3 Quality Gate
-```
+* Multi-line MSG3 entries
+* ANSI/control sequences
+* Unrecognized log lines
+* Malformed entries
+* Different MSG3 formats
+* Tolerant file decoding
 
-The key design decision is that **parsing and business logic are separated**.
-
-The parser answers:
-
-> "What MSG3 records exist in this log?"
-
-The analyzer answers:
-
-> "What is the success rate of those records?"
-
-The reporter answers:
-
-> "How should the result be exposed?"
-
-This separation allows Part 3 to reuse the analyzer without depending on the command-line interface.
-
----
-
-# 5. `models.py`
-
-`models.py` defines the internal representation of a parsed MSG3 record.
+A logical MSG3 event is represented as:
 
 ```python
 @dataclass
@@ -160,320 +68,15 @@ class Msg3Record:
     status: str
 ```
 
-Each valid MSG3 event is converted into one `Msg3Record`.
+Timestamp boundaries are used to distinguish new log entries from continuation lines.
 
-Example:
-
-```text
-timestamp:
-2024-04-24 10:10:10
-
-rnti:
-306
-
-message_type:
-MSG3-RRC-C-REQ
-
-status:
-success
-```
-
-This gives the analyzer a stable data structure instead of making it work directly with raw strings.
+Malformed individual entries are skipped so that one bad record does not terminate analysis of the complete file.
 
 ---
 
-# 6. `constants.py`
+## 4. Status Classification
 
-Status definitions are kept outside the parser and analyzer so that the classification rules are configurable and easy to maintain.
-
-Current configuration:
-
-```python
-SUCCESS_STATUS = {
-    "success",
-}
-
-FAILURE_STATUS = {
-    "failure",
-    "timeout",
-    "crc-error",
-    "crc_error",
-    "failed",
-    "reject",
-    "rejected",
-}
-
-IGNORED_STATUS = {
-    "unknown",
-    "pending",
-    "ignored",
-}
-
-DEFAULT_SUCCESS_THRESHOLD = 95.0
-```
-
-## Why this is important
-
-The parser should not contain business rules such as:
-
-```python
-if status == "success":
-```
-
-Instead, the analyzer uses the centralized status definitions.
-
-This makes it easier to add a new failure status without changing the parser.
-
-For example, if the log format later introduces:
-
-```text
-collision
-```
-
-as a failure status, it can be added to:
-
-```python
-FAILURE_STATUS
-```
-
-without redesigning the parser.
-
----
-
-# 7. `parser.py`
-
-`parser.py` is responsible only for converting raw log data into structured `Msg3Record` objects.
-
-It does not calculate success rate.
-
-## Parser responsibilities
-
-The parser handles:
-
-1. File reading
-2. ANSI escape sequence removal
-3. Timestamp detection
-4. Physical continuation lines
-5. MSG3 identification
-6. RNTI extraction
-7. MSG3 type extraction
-8. Status extraction
-9. Malformed records
-10. Unrelated log entries
-
----
-
-# 8. Multi-line Log Handling
-
-The supplied logs are not guaranteed to contain one complete logical event per physical line.
-
-For example:
-
-```text
-2024-04-24 10:10:10 ... <UL TB> ... type MSG3-RRC-C-REQ status success
-  2e 83 6c d6 4b f4 44 00 00 (9 bytes)
-```
-
-The second line is a continuation of the previous physical entry.
-
-The parser therefore maintains a pending entry:
-
-```text
-Physical line 1
-       │
-       ├── timestamp
-       │
-       ▼
-pending entry
-
-Physical line 2
-       │
-       └── no timestamp
-              │
-              ▼
-       continuation line
-```
-
-The parser combines these lines before attempting to parse the logical event.
-
-This prevents continuation data from being incorrectly treated as a separate record.
-
----
-
-# 9. Why Timestamp Boundaries Are Used
-
-A timestamped line represents the beginning of a new physical log entry.
-
-The parser identifies timestamps using:
-
-```python
-TIMESTAMP_PATTERN
-```
-
-Conceptually:
-
-```text
-YYYY-MM-DD HH:MM:SS
-```
-
-When another timestamped line is encountered:
-
-```text
-previous pending entry
-        ↓
-parse it
-
-new timestamp
-        ↓
-start new entry
-```
-
-This is preferable to grouping every line with the same timestamp because a real log can contain multiple independent events within the same second.
-
----
-
-# 10. Identifying a Valid MSG3 Record
-
-The parser intentionally does not treat every occurrence of the word `MSG3` as an attempt.
-
-A valid result is expected to contain the relevant result information, including:
-
-```text
-<UL TB>
-MSG3-...
-RNTI
-status
-```
-
-For example:
-
-```text
-<UL TB> RNTI 306 ... type MSG3-RRC-C-REQ status success
-```
-
-This reduces false positives from unrelated log messages that merely mention MSG3.
-
----
-
-# 11. Malformed Entry Handling
-
-A production log may contain incomplete or unexpected records.
-
-For example:
-
-```text
-2024-04-24 10:10:10 ... <UL TB> RNTI 100
-type MSG3-RRC-C-REQ
-```
-
-If the status is missing, the parser does not crash.
-
-Instead:
-
-```text
-Malformed entry
-      │
-      ▼
-ignored
-      │
-      ▼
-continue parsing next entry
-```
-
-This is important because one malformed log line should not prevent analysis of the entire file.
-
-The parser opens files using:
-
-```python
-errors="replace"
-```
-
-so unexpected encoding bytes do not terminate the complete analysis.
-
----
-
-# 12. ANSI Escape Sequence Handling
-
-The supplied logs contain terminal color/formatting sequences such as:
-
-```text
-\x1b[32m
-\x1b[0m
-```
-
-These sequences are useful for terminal display but should not affect parsing.
-
-The parser removes ANSI escape sequences before processing the line.
-
-Therefore:
-
-```text
-ANSI formatting
-      ↓
-removed
-      ↓
-clean log content
-      ↓
-regex extraction
-```
-
-This keeps parsing independent of terminal formatting.
-
----
-
-# 13. `msg3_analyzer.py`
-
-The analyzer receives:
-
-```python
-List[Msg3Record]
-```
-
-and calculates:
-
-```text
-successes
-failures
-ignored
-success_rate
-threshold
-gate result
-```
-
-The analyzer does not know where the records came from.
-
-They could come from:
-
-* `bs_log.txt`
-* `bs_log2.txt`
-* a unit test
-* another Python program
-* Part 3 Quality Gate
-
-This makes the analyzer reusable.
-
----
-
-# 14. Status Classification
-
-Each record is normalized using lowercase status values.
-
-For example:
-
-```text
-SUCCESS
-Success
-success
-SUCCESS
-```
-
-are normalized to:
-
-```text
-success
-```
-
-The analyzer then checks the configured status sets.
+Status definitions are centralized in `constants.py`.
 
 ### Success
 
@@ -501,620 +104,302 @@ pending
 ignored
 ```
 
-Unknown/unrecognized statuses are not counted as either success or failure.
+Unknown or unsupported statuses are not automatically treated as failures.
+
+Only success and failure records contribute to the success-rate denominator.
 
 ---
 
-# 15. Success Rate Calculation
+## 5. Runtime Execution
 
-The analyzer follows the exact assignment formula:
+The log file is selected at runtime.
 
-```text
-success_rate =
-    successes / (successes + failures) * 100
+### Analyze `bs_log.txt`
+
+```bash
+python -m analyzer.cli --log logs/bs_log.txt
 ```
 
-Example:
+### Analyze `bs_log2.txt`
 
-```text
-successes = 9
-failures  = 1
-
-success_rate =
-    9 / (9 + 1) × 100
-
-= 90%
+```bash
+python -m analyzer.cli --log logs/bs_log2.txt
 ```
 
-Ignored records are excluded:
-
-```text
-successes = 9
-failures  = 1
-ignored   = 5
-
-success rate = 90%
-```
-
-The five ignored records do not affect the denominator.
+No log file is hard-coded into the analyzer.
 
 ---
 
-# 16. Empty Case
+## 6. Results
 
-If there are no measurable records:
+### `bs_log.txt`
+
+```text
+Total Records : 35
+Successes     : 9
+Failures      : 26
+Ignored       : 0
+Success Rate  : 25.71 %
+```
+
+Calculation:
+
+```text
+9 / (9 + 26) × 100 = 25.71%
+```
+
+### `bs_log2.txt`
+
+```text
+Total Records : 451
+Successes     : 409
+Failures      : 42
+Ignored       : 0
+Success Rate  : 90.69 %
+```
+
+Calculation:
+
+```text
+409 / (409 + 42) × 100 = 90.69%
+```
+
+### Summary
+
+| Log           | Records | Success | Failure | Ignored | Success Rate |
+| ------------- | ------: | ------: | ------: | ------: | -----------: |
+| `bs_log.txt`  |      35 |       9 |      26 |       0 |   **25.71%** |
+| `bs_log2.txt` |     451 |     409 |      42 |       0 |   **90.69%** |
+
+---
+
+## 7. Reporting
+
+The analyzer produces both required output formats.
+
+### Console Report
+
+```bash
+python -m analyzer.cli --log logs/bs_log2.txt
+```
+
+### JSON Report
+
+Generated at:
+
+```text
+reports/msg3_report.json
+```
+
+The JSON report is machine-readable and can be consumed by downstream automation such as the Part 3 Quality Gate.
+
+---
+
+## 8. Empty Data Behavior
+
+When there are no measurable success/failure records:
 
 ```text
 successes = 0
 failures  = 0
 ```
 
-the denominator is zero.
+the analyzer returns:
 
-The implementation handles this explicitly instead of performing:
-
-```python
-0 / 0
+```text
+success_rate = 0.0%
 ```
 
-The analyzer returns a safe zero success rate rather than crashing.
-
-This is important for CI because an empty or invalid input should not result in a Python exception that hides the actual problem.
+This avoids division-by-zero and prevents an empty input from accidentally passing a positive quality threshold.
 
 ---
 
-# 17. Quality Threshold
+## 9. Design Decisions
 
-The current configured threshold is:
+### Repeated Attempts
 
-```text
-95%
-```
+Each parsed MSG3 attempt is counted independently.
 
-Therefore:
+Records are not deduplicated by RNTI because the metric represents **MSG3 attempt success rate**, rather than unique-device success rate.
 
-```text
-success_rate >= 95%
-```
+### Recent Activity
 
-passes.
+The specification does not define a concrete recency window.
 
-And:
+Therefore, the selected log file is treated as the analysis window and no arbitrary time filter is applied.
 
-```text
-success_rate < 95%
-```
+### Unknown Statuses
 
-fails.
+Unknown statuses are ignored for the success-rate calculation rather than being classified as failures.
 
-The boundary condition is intentional.
+This prevents an unexpected future status from artificially lowering the metric.
 
-For example:
+### Reusable Analyzer
 
-```text
-95% → PASS
-94.99% → FAIL
-```
+Part 3 imports the analyzer directly instead of executing the CLI and parsing console output.
 
-This behavior is covered by unit tests.
+This keeps business logic independent from presentation and CLI formatting.
 
 ---
 
-# 18. `report.py`
+## 10. Testing
 
-The reporting layer converts the analyzer result into machine-readable JSON.
-
-Example:
-
-```json
-{
-    "successes": 2778,
-    "failures": 52,
-    "ignored": 0,
-    "success_rate": 98.16,
-    "success_threshold": 95.0,
-    "gate_status": "PASS"
-}
-```
-
-The JSON report is intended for downstream automation.
-
-Part 3 can consume this information without parsing console output.
-
----
-
-# 19. CLI
-
-The command-line interface allows the log file to be selected at runtime.
-
-Example:
-
-```bash
-python -m analyzer.cli --log logs/bs_log.txt
-```
-
-Another file can be analyzed without modifying the source code:
-
-```bash
-python -m analyzer.cli --log logs/bs_log2.txt
-```
-
-This satisfies the requirement that the input log must not be hard-coded.
-
----
-
-# 20. Running Part 1
-
-Activate the virtual environment:
-
-```bash
-source venv/bin/activate
-```
-
-Run the analyzer:
-
-```bash
-python -m analyzer.cli --log logs/bs_log.txt
-```
-
-Run against the second log:
-
-```bash
-python -m analyzer.cli --log logs/bs_log2.txt
-```
-
----
-
-# 21. Example Human-Readable Output
-
-The CLI produces output similar to:
-
-```text
-========== MSG3 Analysis ==========
-
-Successes     : 51
-Failures      : 26
-Ignored       : 0
-Success Rate  : 66.23 %
-Threshold     : 95.00 %
-Gate Status   : FAIL
-```
-
-For the second log:
-
-```text
-========== MSG3 Analysis ==========
-
-Successes     : 2778
-Failures      : 52
-Ignored       : 0
-Success Rate  : 98.16 %
-Threshold     : 95.00 %
-Gate Status   : PASS
-```
-
-The exact values depend on the current parser and supplied log contents.
-
----
-
-# 22. Unit Testing
-
-Part 1 contains unit tests for both parsing and analysis.
-
-## Parser tests
-
-`tests/test_parser.py` validates:
-
-* Missing file
-* Empty file
-* Valid MSG3 record
-* Non-MSG3 records
-* ANSI cleanup
-* Unknown status
-* Multiple records
-* `Msg3Record` object creation
-* Timestamp extraction
-* Failure status
-* Multi-line MSG3 entries
-* Multiple multi-line entries
-* Malformed multi-line entries
-* Non-MSG3 multi-line entries
-
-Run:
+### Parser Tests
 
 ```bash
 python -m pytest tests/test_parser.py -v
 ```
 
-Expected:
-
-```text
-14 passed
-```
-
----
-
-# 23. Analyzer Tests
-
-`tests/test_msg3_analyzer.py` validates:
-
-* All-success input
-* All-failure input
-* Mixed success/failure
-* Ignored statuses
-* Empty records
-* Success-rate precision
-* Threshold failure
-* Threshold boundary
-* Case normalization
-* Ignored records not affecting the rate
-* Analyzer reusability
-
-Run:
+### Analyzer Tests
 
 ```bash
 python -m pytest tests/test_msg3_analyzer.py -v
 ```
 
----
-
-# 24. Run All Part 1 Tests
-
-Run:
+### All Part 1 Tests
 
 ```bash
 python -m pytest tests/test_parser.py tests/test_msg3_analyzer.py -v
 ```
 
-Current expected result:
-
-```text
-25 passed
-```
-
-This provides regression protection for both parsing and business logic.
-
----
-
-# 25. Production-Readiness Decisions
-
-Several design decisions were intentionally made to make the implementation more robust.
-
-### Decision 1 — Separate parser and analyzer
-
-The parser does not calculate business metrics.
-
-The analyzer does not understand raw log syntax.
-
-This follows separation of concerns.
-
-### Decision 2 — Ignore malformed records instead of crashing
-
-A single bad log entry should not prevent analysis of the remaining file.
-
-### Decision 3 — Don't count every MSG3 mention
-
-Only actual MSG3 result records are converted into `Msg3Record`.
-
-This reduces false positives.
-
-### Decision 4 — Externalize status definitions
-
-Status classification is centralized in `constants.py`.
-
-### Decision 5 — Don't hard-code the input file
-
-The log path is provided at runtime.
-
-### Decision 6 — Preserve unknown statuses
-
-Unknown statuses are not silently converted into failures.
-
-They are retained as records and classified as ignored by the analyzer.
-
-This prevents an unexpected future status from artificially reducing the success rate.
-
-### Decision 7 — Avoid volatile assertions
-
-The tests focus on structural properties and invariants rather than hard-coded values that may change between runs.
-
----
-
-# 26. Handling Large Files
-
-The parser reads the file incrementally:
-
-```python
-for raw_line in file:
-```
-
-rather than loading the entire file into memory.
-
-Therefore the memory usage is primarily associated with the current logical entry and the resulting parsed records rather than the complete raw log file.
-
-This is more suitable for production-sized log files.
-
----
-
-# 27. Error Handling Strategy
-
-The parser follows a fail-soft strategy for malformed log content.
-
-### File does not exist
-
-Raises:
-
-```text
-FileNotFoundError
-```
-
-This is an environmental/configuration error and should be visible to the caller.
-
-### Invalid individual log entry
-
-The parser skips the malformed entry and continues.
-
-### Invalid encoding
-
-The file is opened with:
-
-```python
-errors="replace"
-```
-
-to avoid terminating analysis because of an isolated invalid byte.
-
-### Empty file
-
-Returns:
-
-```text
-[]
-```
-
-and the analyzer handles the empty case.
-
----
-
-# 28. Part 1 Data Flow
-
-The complete flow is:
-
-```text
-CLI
- │
- │ --log logs/bs_log.txt
- ▼
-LogParser
- │
- ├── Read file
- ├── Clean ANSI codes
- ├── Detect timestamp boundaries
- ├── Combine continuation lines
- ├── Detect MSG3 result
- ├── Extract timestamp
- ├── Extract RNTI
- ├── Extract type
- └── Extract status
- │
- ▼
-Msg3Record[]
- │
- ▼
-Msg3Analyzer
- │
- ├── Classify success
- ├── Classify failure
- ├── Classify ignored
- ├── Calculate success rate
- └── Evaluate threshold
- │
- ▼
-Report
- │
- ├── Console
- └── JSON
- │
- ▼
-Part 3 Quality Gate
-```
-
----
-
-# 29. Why This Design Supports Part 3
-
-Part 3 requires the MSG3 analyzer to be reused as a library.
-
-The architecture already supports this.
-
-Part 3 does not need to execute:
-
-```bash
-python analyzer.py
-```
-
-and parse console output.
-
-Instead it can directly call:
-
-```python
-parser = LogParser(log_file)
-
-records = parser.parse()
-
-analyzer = Msg3Analyzer()
-
-result = analyzer.analyze(records)
-```
-
-The Quality Gate can then evaluate:
-
-```python
-result["success_rate"]
-```
-
-against a threshold supplied by the gate.
-
-This keeps the quality gate independent from console formatting.
-
----
-
-# 30. Testing Strategy
-
-The testing strategy has two levels.
-
-## Unit tests
-
-Test individual components:
-
-```text
-Parser
-   ↓
-Parser unit tests
-
-Analyzer
-   ↓
-Analyzer unit tests
-```
-
-These tests use small synthetic inputs and validate specific behaviors.
-
-## Integration-style validation
-
-Run the complete analyzer against:
-
-```text
-logs/bs_log.txt
-logs/bs_log2.txt
-```
-
-This validates that the parser and analyzer work together against the supplied production-style data.
-
----
-
-# 31. Definition of Done
-
-Part 1 is considered complete when:
-
-* [x] Both supplied logs can be analyzed
-* [x] Log file is selectable at runtime
-* [x] MSG3 records are parsed
-* [x] Multi-line entries are handled
-* [x] Malformed entries do not crash the parser
-* [x] ANSI escape sequences are handled
-* [x] Non-MSG3 entries are ignored
-* [x] Status classification is centralized
-* [x] Success rate follows the required formula
-* [x] Empty input is handled
-* [x] JSON output is generated
-* [x] Human-readable output is generated
-* [x] Parser unit tests exist
-* [x] Analyzer unit tests exist
-* [x] Threshold behavior is tested
-* [x] Analyzer is reusable by Part 3
-
----
-
-# 32. Stretch / Future Improvements
-
-The assignment identifies per-hour trend/degradation analysis as a Part 1 bonus.
-
-Possible future implementation:
-
-```text
-Timestamp
-    ↓
-Hour bucket
-    ↓
-Success / Failure count
-    ↓
-Hourly success rate
-    ↓
-Trend
-    ↓
-Degradation detection
-```
-
-For example:
-
-```text
-10:00 → 98%
-11:00 → 97%
-12:00 → 96%
-13:00 → 82%  ← degradation
-14:00 → 80%
-```
-
-This could identify when a problem started rather than reporting only the overall success rate.
-
-This feature is intentionally separate from the core success-rate calculation.
-
----
-
-# 33. Commands Cheat Sheet
-
-### Run Part 1 analyzer
-
-```bash
-python -m analyzer.cli --log logs/bs_log.txt
-```
-
-### Analyze second log
-
-```bash
-python -m analyzer.cli --log logs/bs_log2.txt
-```
-
-### Run parser tests
-
-```bash
-python -m pytest tests/test_parser.py -v
-```
-
-### Run analyzer tests
-
-```bash
-python -m pytest tests/test_msg3_analyzer.py -v
-```
-
-### Run complete Part 1 test suite
-
-```bash
-python -m pytest tests/test_parser.py tests/test_msg3_analyzer.py -v
-```
-
-### Run all project tests
+### Complete Framework
 
 ```bash
 python -m pytest -v
 ```
 
+Test coverage includes:
+
+* Valid MSG3 records
+* Success/failure classification
+* Ignored statuses
+* Multi-line records
+* ANSI cleanup
+* Malformed entries
+* Empty input
+* Success-rate calculation
+* Threshold behavior
+* Case normalization
+
 ---
 
-# 34. Summary
+## 11. Quality Threshold
 
-Part 1 provides a small but reusable log-analysis component rather than a single script.
-
-The main design principle is:
+The configured default threshold is:
 
 ```text
-Raw logs
-   ↓
-Robust parser
-   ↓
-Structured records
-   ↓
-Business-rule analyzer
-   ↓
-Machine-readable report
-   ↓
-Reusable quality-gate input
+95%
 ```
 
-The parser is responsible for understanding the log format, including multi-line and malformed entries.
+The boundary is inclusive:
 
-The analyzer is responsible for calculating the MSG3 success rate.
+```text
+success_rate >= threshold → PASS
+success_rate < threshold  → FAIL
+```
 
-The reporter is responsible for exposing the result.
+Therefore:
 
-This separation makes the implementation easier to test, maintain, extend, and reuse in Part 3.
+```text
+95.00% → PASS
+94.99% → FAIL
+```
+
+This behavior is tested and reused by Part 3.
+
+---
+
+## 12. Bonus — Hourly Trend & Degradation
+
+The optional trend functionality is implemented separately:
+
+```text
+analyzer/trend_analyzer.py
+analyzer/trend_cli.py
+```
+
+Run:
+
+```bash
+python -m analyzer.trend_cli \
+    --log logs/bs_log2.txt \
+    --degradation-threshold 10
+```
+
+The bonus provides:
+
+* Hourly success rates
+* Trend visibility
+* Configurable degradation threshold
+* Degradation-window detection
+
+Hourly bucketing uses the timestamp representation from the source log without applying an implicit timezone conversion.
+
+---
+
+## 13. Definition of Done
+
+* [x] Both supplied log files analyzed
+* [x] Runtime-selectable log input
+* [x] Required success-rate formula
+* [x] Multi-line log handling
+* [x] ANSI cleanup
+* [x] Malformed/unrecognized line handling
+* [x] Empty-data handling
+* [x] Console reporting
+* [x] JSON reporting
+* [x] Parser tests
+* [x] Analyzer tests
+* [x] Threshold boundary testing
+* [x] Reusable analyzer for Part 3
+* [x] Hourly trend analysis
+* [x] Degradation detection
+
+---
+
+## 14. Quick Command Reference
+
+```bash
+# Analyze first log
+python -m analyzer.cli --log logs/bs_log.txt
+
+# Analyze second log
+python -m analyzer.cli --log logs/bs_log2.txt
+
+# Parser tests
+python -m pytest tests/test_parser.py -v
+
+# Analyzer tests
+python -m pytest tests/test_msg3_analyzer.py -v
+
+# All Part 1 tests
+python -m pytest tests/test_parser.py tests/test_msg3_analyzer.py -v
+
+# Complete framework
+python -m pytest -v
+
+# Bonus trend analysis
+python -m analyzer.trend_cli \
+    --log logs/bs_log2.txt \
+    --degradation-threshold 10
+```
+
+---
+
+## Summary
+
+Part 1 provides a reusable log-analysis component with clear separation between parsing, business logic, reporting, and CI integration.
+
+```text
+Raw Log
+   ↓
+Robust Parser
+   ↓
+Structured Records
+   ↓
+MSG3 Analyzer
+   ↓
+Console + JSON
+   ↓
+Quality Gate
+```

@@ -208,6 +208,30 @@ The analyzer reports:
 
 The threshold is configurable and the feature is isolated from the core Part 1 CLI.
 
+
+
+
+## Stretch Items
+
+In addition to the core requirements, the following stretch items were implemented.
+
+### Completed
+
+- **Reporting:** The MSG3 analyzer produces human-readable console output and a machine-readable JSON report at `reports/msg3_report.json`.
+- **CI:** A GitHub Actions workflow is included under `.github/workflows/`.
+- **Hourly Trend Analysis:** MSG3 success rates can be calculated for individual hourly time buckets.
+- **Degradation Detection:** A configurable percentage-point threshold identifies significant drops in hourly success rate.
+- **Extended API Automation:** The API suite contains **10 automated scenarios**, covering positive and negative cases, CRUD operations, query parameters, response validation, and error/boundary behavior.
+- **Additional Test Coverage:** Parser, analyzer, quality-gate, and trend-analysis edge cases are covered beyond the minimum scenarios.
+- **AI Usage Documentation:** `AI_USAGE.md` documents how AI was used during development and how suggestions were verified.
+
+### Reproducing the Stretch Features
+
+Run the complete automated suite:
+
+```bash
+python -m pytest -v
+
 ---
 
 # Questions & Assumptions
