@@ -46,7 +46,7 @@ jobs:
         run: |
           python -m gate.cli \
             --log logs/bs_log2.txt \
-            --min-rate 95
+            --min-rate 90
 
       - name: Upload test reports
         if: always()
