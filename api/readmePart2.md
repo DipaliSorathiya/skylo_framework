@@ -224,18 +224,3 @@ reports/report.html
 ```
 
 ---
-
-# Future Improvements
-
-Possible enhancements include:
-
-- Request/Response logging
-- Retry mechanism
-- JSON Schema validation
-- Authentication support
-- API mocking
-- Parallel execution
-- CI/CD integration
-- Docker execution
-
-These were intentionally kept out of scope to keep the assignment focused on the requested functionality.

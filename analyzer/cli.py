@@ -1,3 +1,7 @@
+"""
+Command Line Interface
+"""
+
 import argparse
 
 from analyzer.parser import LogParser
@@ -7,27 +11,19 @@ from analyzer.report import ReportGenerator
 
 def main():
 
-    parser = argparse.ArgumentParser(
-        description="MSG3 Success Rate Analyzer"
-    )
+    parser = argparse.ArgumentParser()
 
     parser.add_argument(
-
         "--log",
-
         required=True,
-
         help="Path to log file"
-
     )
 
     args = parser.parse_args()
 
-    # ----------------------------
+    log_parser = LogParser(args.log)
 
-    parser_obj = LogParser(args.log)
-
-    records = parser_obj.parse()
+    records = log_parser.parse()
 
     analyzer = Msg3Analyzer()
 
